@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="app-version" content="2.3.0">
+<meta name="app-version" content="2.3.1">
 <title>快送 · 三種送法</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='13' fill='%23ffc400'/%3E%3Cpath d='M17 32h26M33 22l10 10-10 10' stroke='%2312130f' stroke-width='6' stroke-linecap='round' fill='none'/%3E%3C/svg%3E">
 <style>
@@ -244,6 +244,13 @@ select{appearance:none; background-image:url("data:image/svg+xml,%3Csvg xmlns='h
 .lp{display:flex; gap:7px; align-items:flex-start; font-size:12px; color:#4d4838}
 .lp svg{width:14px;height:14px;flex:0 0 auto;stroke:#8a6500;margin-top:2px}
 @media(min-width:860px){.login{display:grid; grid-template-columns:1fr 440px; gap:36px; align-items:start; max-width:980px; margin:0 auto; padding-top:40px}}
+@media(max-width:859px){
+  .login{display:flex; flex-direction:column; gap:16px; padding:16px 14px 34px}
+  .login-card{max-width:none; order:-1; padding:16px}
+  .login-hero{max-width:none; order:2}
+  .login-hero h1{font-size:24px}
+  .login-hero p{font-size:12.5px}
+}
 
 /* ---------- modal ---------- */
 .modal-wrap{position:fixed; inset:0; z-index:40; background:rgba(18,19,15,.5); display:flex; align-items:flex-end; justify-content:center; padding:0}
@@ -319,13 +326,14 @@ select{appearance:none; background-image:url("data:image/svg+xml,%3Csvg xmlns='h
 const DB_KEY = 'ks_db_v2';
 const SESSION_KEY = 'ks_session_v2';
 const CHANNEL = 'ks_channel_v2';
-const APP_VERSION = '2.3.0';
-const APP_VER_TAG = 'v2.3';
+const APP_VERSION = '2.3.1';
+const APP_VER_TAG = 'v2.3.1';
 
+const UPSTAIRS_FEE = 20;
 const MODES = {
-  walk: { key:'walk', name:'步兵', short:'步兵', limit:10, tag:'限 10kg', fee:'只做路邊交收，唔上樓；冇隧道費。' },
-  car:  { key:'car', name:'私家車', short:'私家車', tag:'隧道／停車另議', fee:'隧道費、停車場費另議，唔包喺個價入面。' },
-  van:  { key:'van', name:'貨van', short:'貨van', tag:'隧道／停車另計 · 上樓費自傾', fee:'隧道費、停車場費另計；要上樓就同司機自傾上樓費。' }
+  walk: { key:'walk', name:'步兵', short:'步兵', limit:10, tag:'限 10kg · 可上樓', fee:'可以上樓；上樓加一小時泊車費，一般 $20。' },
+  car:  { key:'car', name:'私家車', short:'私家車', tag:'隧道／停車另議 · 可上樓', fee:'隧道費、停車場費另議；上樓加一小時泊車費，一般 $20。' },
+  van:  { key:'van', name:'貨van', short:'貨van', tag:'隧道／停車另計 · 可上樓', fee:'隧道費、停車場費另計；上樓加一小時泊車費，一般 $20。' }
 };
 const GOODS = ['生果','文件','包裹','其他'];
 const PAYS = ['現金','轉數快','PayMe','八達通'];
@@ -402,7 +410,20 @@ function migrateDB(d){
   d.orders = Array.isArray(d.orders) ? d.orders : [];
   d.profiles = d.profiles && typeof d.profiles === 'object' ? d.profiles : {};
   d.notices = Array.isArray(d.notices) ? d.notices : [];
+  Object.keys(d.profiles).forEach(k => {
+    const p = d.profiles[k];
+    if(!p || typeof p !== 'object'){ delete d.profiles[k]; return; }
+    p.phone = p.phone || k;
+    if(!MODES[p.mode]) p.mode = 'car';
+    if(!Array.isArray(p.areas)) p.areas = [];
+    if(p.announce === undefined) p.announce = true;
+  });
   d.orders.forEach(o => {
+    if(!o.pickup) o.pickup = { district:'', addr:'', from:'', to:'' };
+    if(!o.drop) o.drop = { district:'', addr:'', deadline:'' };
+    if(!o.goods) o.goods = { type:'其他', desc:'', pieces:1 };
+    if(!o.consignee) o.consignee = { name:'', phone:'' };
+    if(!MODES[o.mode]) o.mode = 'car';
     if(!Array.isArray(o.offers)) o.offers = [];
     if(o.status === 'accepted' && !o.agreedPrice) o.agreedPrice = o.askPrice || 0;
     if(o.status === 'delivered' && !o.finalTotal) o.finalTotal = o.agreedPrice || 0;
@@ -446,7 +467,6 @@ function speak(text){
     const u = new SpeechSynthesisUtterance(text);
     u.lang = 'zh-HK'; u.rate = 0.92; u.pitch = 1;
     const v = pickVoice(); if(v) u.voice = v;
-    speechSynthesis.cancel();
     speechSynthesis.speak(u);
   }catch(e){}
 }
@@ -459,7 +479,8 @@ function announceText(o){
     ('等司機報價' + (o.budget ? '，預算 ' + o.budget + ' 蚊內' : ''));
   return '快送新單。' + m + '，' + o.pickup.district + '去' + o.drop.district + '，' + o.weight + '公斤，' +
     price + '。' + (o.tomorrow ? '明日 ' : '') + o.pickup.from + ' 至 ' + o.pickup.to + ' 提貨，' +
-    (o.tomorrow ? '明日 ' : '') + o.drop.deadline + ' 前送到。';
+    (o.tomorrow ? '明日 ' : '') + o.drop.deadline + ' 前送到。' +
+    (o.upstairs ? '要上樓，泊車費約 ' + UPSTAIRS_FEE + ' 蚊。' : '');
 }
 
 /* ---------- 提示 / 彈窗 ---------- */
@@ -495,9 +516,9 @@ function renderLogin(){
     <section class="login-hero">
       <div class="kicker">QUICK SEND · 香港</div>
       <h1>三種送法，<br>價啱就接。</h1>
-      <p>步兵、私家車、貨van，全部路邊交收。貨主可以自己定價，或者等司機開價；雙方議價，最後由貨主揀邊個送。</p>
+      <p>步兵、私家車、貨van，三種都包上樓。貨主可以自己定價，或者等司機開價；雙方議價，最後由貨主揀邊個送。</p>
       <div class="login-points">
-        <div class="lp">${icoCheck()} 步兵限 10kg，私家車同貨van 隧道／停車另議</div>
+        <div class="lp">${icoCheck()} 步兵限 10kg；三種都包上樓，上樓泊車約 $20</div>
         <div class="lp">${icoCheck()} 貨主定價 或 司機開價，平台唔抽佣</div>
         <div class="lp">${icoCheck()} 司機接單無上限，可以拒接、可以取消</div>
         <div class="lp">${icoCheck()} 一出單即語音播報，其他在線司機即時收到</div>
@@ -538,7 +559,7 @@ function renderLogin(){
 
       <label class="check agree" data-check="agree">
         <input type="checkbox" checked data-login="agree">
-        <span>我同意：《只做路邊交收（貨van 上樓另議）》、《貨物要封箱或一眼睇得出》、《平台費 $0、司機自負牌照保險》。</span>
+        <span>我同意：《包上樓，上樓加一小時泊車費（一般 $20）》、《貨物要封箱或一眼睇得出》、《平台費 $0、司機自負牌照保險》。</span>
       </label>
 
       <div class="btn-row" style="margin-top:12px">
@@ -574,6 +595,7 @@ function doLogin(){
   saveDB();
   setSession(phone);
   lastAnnouncedAt = Date.now();
+  lastNoticeAt = Date.now();
   ui.tab = ui.rolePick === 'driver' ? 'board' : 'new';
   ui.screen = ui.rolePick;
   ui.draft = null;
@@ -592,7 +614,7 @@ function topBar(p){
           <span class="brand-badge">
             <svg viewBox="0 0 24 24" fill="none" stroke="#12130f" stroke-width="2.2" stroke-linecap="round"><path d="M4 12h15M13 6l6 6-6 6"/></svg>
           </span>
-          <span class="brand-txt"><b>快送<span class="vtag">${APP_VER_TAG}</span></b><small>路邊交收 · 價啱就接</small></span>
+          <span class="brand-txt"><b>快送<span class="vtag">${APP_VER_TAG}</span></b><small>包上樓 · 價啱就接</small></span>
         </a>
         <div class="top-right">
           ${p ? `<span class="phone">${esc(p.phone)}</span>
@@ -629,9 +651,9 @@ function rulesBody(){
   <div class="sec">
     <div class="sec-head"><span class="sec-no">1</span><h3>三種送法</h3></div>
     <div class="sec-body">
-      <p><b>步兵</b>：只限 10kg 內，行路／搭車送，只做路邊交收。<br>
-      <b>私家車</b>：隧道費、停車場費另議，唔包喺個價入面。<br>
-      <b>貨van</b>：隧道費、停車場費另計；如需上樓，上樓費同司機自傾。</p>
+      <p><b>步兵</b>：只限 10kg 內，行路／搭車送，可以上樓；上樓加一小時泊車費，一般 $20。<br>
+      <b>私家車</b>：隧道費、停車場費另議，唔包喺個價入面；上樓加一小時泊車費，一般 $20。<br>
+      <b>貨van</b>：隧道費、停車場費另計；上樓加一小時泊車費，一般 $20。</p>
     </div>
   </div>
   <div class="sec">
@@ -644,7 +666,7 @@ function rulesBody(){
   <div class="sec">
     <div class="sec-head"><span class="sec-no">3</span><h3>交收方式</h3></div>
     <div class="sec-body">
-      <p>步兵同私家車只做<b>路邊交收</b>，唔上樓、唔入屋。貨van 如需上樓，要事先同司機講清楚，上樓費自己傾。</p>
+      <p>三種送法都<b>包上樓</b>，貨可以送到門口或樓上。上樓要泊車，一般加一小時停車場費 <b>$20</b>；實際泊車費由司機同貨主完成時確認。唔上樓就冇呢項。</p>
     </div>
   </div>
   <div class="sec">
@@ -726,10 +748,12 @@ function timeAgo(at){
   const d = new Date(at); return pad2(d.getHours()) + ':' + pad2(d.getMinutes());
 }
 function notifyNewOrder(o){
+  const m = MODES[o.mode]; if(!m) return;
   Object.values(db.profiles || {}).forEach(p => {
     if(p.role === 'driver' && p.online && p.mode === o.mode && p.phone !== o.shipperPhone){
+      if(Array.isArray(p.areas) && p.areas.length && !p.areas.includes(o.pickup.district)) return;
       const price = o.pricing === 'fixed' ? '$' + money(o.askPrice) : '待出價';
-      pushNotice(p.phone, '新單 ' + price, `${o.pickup.district} → ${o.drop.district} · ${o.weight}kg · ${MODES[o.mode].name} · ${o.pickup.from}–${o.pickup.to} 提貨`, o.id, 'newOrder');
+      pushNotice(p.phone, '新單 ' + price, `${o.pickup.district} → ${o.drop.district} · ${o.weight}kg · ${m.name} · ${o.pickup.from}–${o.pickup.to} 提貨${o.upstairs ? ' · 上樓 +$' + UPSTAIRS_FEE + ' 泊車' : ''}`, o.id, 'newOrder');
     }
   });
 }
@@ -818,7 +842,7 @@ function renderOrderForm(p){
               <select data-f="fromD" data-rerender="1">${AREAS.map(a => `<option ${d.fromD === a ? 'selected' : ''}>${a}</option>`).join('')}</select>
             </div>
             <div class="field">
-              <label>提貨地址（路邊）</label>
+              <label>提貨地址</label>
               <input type="text" data-f="fromAddr" value="${esc(d.fromAddr)}" placeholder="例：果欄 A 座門口">
             </div>
             <div class="field">
@@ -826,7 +850,7 @@ function renderOrderForm(p){
               <select data-f="toD" data-rerender="1">${AREAS.map(a => `<option ${d.toD === a ? 'selected' : ''}>${a}</option>`).join('')}</select>
             </div>
             <div class="field">
-              <label>送達地址（路邊）</label>
+              <label>送達地址</label>
               <input type="text" data-f="toAddr" value="${esc(d.toAddr)}" placeholder="例：沙田第一城 49 座對出巴士站">
             </div>
             <div class="field">
@@ -845,7 +869,7 @@ function renderOrderForm(p){
             ${Object.keys(MODES).map(k => `
               <button class="mode ${d.mode === k ? 'on' : ''}" data-act="setMode" data-mode="${k}">
                 <b>${MODES[k].name}</b>
-                <span>${k === 'walk' ? '行路／搭車送，路邊交收' : k === 'car' ? '私家車點對點送' : '大件、多箱、可上樓'}</span>
+                <span>${k === 'walk' ? '行路／搭車送，可上樓' : k === 'car' ? '私家車點對點，可上樓' : '大件、多箱、可上樓'}</span>
                 <span class="mtag">${MODES[k].tag}</span>
               </button>`).join('')}
           </div>
@@ -860,13 +884,12 @@ function renderOrderForm(p){
               <div class="settings-hint" style="padding-top:6px">${mode.name} · ${mode.tag}</div>
             </div>
           </div>
-          ${d.mode === 'van' ? `
           <label class="van-opt">
             <input type="checkbox" data-c="upstairs" ${d.upstairs ? 'checked' : ''}>
-            <span>需要上樓（上樓費同司機自傾，平台唔定價）</span>
-          </label>` : ''}
+            <span>需要上樓（加一小時泊車費，一般 $${UPSTAIRS_FEE}）</span>
+          </label>
           ${weightWarn ? `<div class="notice warn" style="margin-top:9px">${icoWarn()} 步兵限 10kg，你填咗 ${esc(d.weight)}kg。請改做私家車或貨van，或者減重。</div>` : ''}
-          <div class="notice ${d.mode === 'van' ? '' : 'calm'}" style="margin-top:9px">${icoInfo()} ${mode.fee}</div>
+          <div class="notice ${d.upstairs ? '' : 'calm'}" style="margin-top:9px">${icoInfo()} ${mode.fee}</div>
         </div>
       </div>
 
@@ -941,7 +964,7 @@ function renderOrderForm(p){
             <div class="field">
               <label>你出幾錢（HK$）</label>
               <input type="number" min="1" step="1" data-f="askPrice" data-rerender="1" value="${esc(d.askPrice)}" placeholder="80">
-              <span class="hint">未計隧道／停車場（如適用）。</span>
+              <span class="hint">未計隧道／停車場；上樓另加泊車（一般 $${UPSTAIRS_FEE}）。</span>
             </div>` : `
             <div class="field">
               <label>預算上限（可留空）</label>
@@ -953,6 +976,7 @@ function renderOrderForm(p){
           <div class="notice calm" style="margin-top:9px">${icoInfo()} 市區紅的跳錶參考：<b>$${money(ref)}</b>（${fmtKm(km)}）。
             ${d.pricing === 'fixed' ? `<button class="btn sm ghost" style="margin-left:6px" data-act="useRef" data-ref="${ref}">用參考價</button>` : ''}
           </div>` : ''}
+          ${d.upstairs ? `<div class="notice calm" style="margin-top:9px">${icoInfo()} 上樓另加一小時泊車費，一般 <b>$${UPSTAIRS_FEE}</b>；完成交收時按實際輸入。</div>` : ''}
           <div class="notice" style="margin-top:9px">${icoWarn()} 平台費 <b>$0</b>。車費由你同司機直接交收，平台唔代收、唔墊付。</div>
         </div>
       </div>
@@ -994,7 +1018,7 @@ function renderOrderForm(p){
         </div>
         <p class="tip" style="margin-top:9px">出單後，所有在線同類司機會即時收到語音播報，亦可以喺「接單大廳」睇到。</p>
       </div>
-      <div class="notice calm" style="margin-top:10px">${icoInfo()} 只做路邊交收；貨van 要上樓就同司機自傾上樓費。</div>
+      <div class="notice calm" style="margin-top:10px">${icoInfo()} 三種送法都包上樓；上樓加一小時泊車費，一般 $${UPSTAIRS_FEE}，完成時按實際輸入。</div>
     </aside>
   </div>`;
 }
@@ -1048,7 +1072,7 @@ function orderCardShipper(o){
       <span class="badge">提貨 ${tlab(o, o.pickup.from)}–${esc(o.pickup.to)}</span>
       <span class="badge">${tlab(o, o.drop.deadline)} 前</span>
       ${o.mode !== 'walk' ? `<span class="badge">${o.mode === 'car' ? '隧道／停車另議' : '隧道／停車另計'}</span>` : ''}
-      ${o.mode === 'van' && o.upstairs ? `<span class="badge">可上樓 · 費用自傾</span>` : ''}
+      ${o.upstairs ? `<span class="badge">可上樓 · 泊車約 $${UPSTAIRS_FEE}</span>` : ''}
       ${o.goods.buyFor ? `<span class="badge warn">代購 · 先收錢</span>` : ''}
     </div>
 
@@ -1079,7 +1103,7 @@ function orderCardShipper(o){
     ${o.status === 'delivered' ? `
       <div class="o-note">
         <span>已交收 · 實收：</span><b>$${money(o.finalTotal || o.agreedPrice)}</b>
-        ${o.finalFee && (o.finalFee.tunnel || o.finalFee.parking || o.finalFee.upstairs) ? `<br><span>其中附加：</span>隧道 $${money(o.finalFee.tunnel)} · 停車 $${money(o.finalFee.parking)} · 上樓 $${money(o.finalFee.upstairs)}` : ''}
+        ${o.finalFee && (o.finalFee.tunnel || o.finalFee.parking || o.finalFee.upstairs) ? `<br><span>其中附加：</span>${[o.finalFee.tunnel ? `隧道 $${money(o.finalFee.tunnel)}` : '', o.finalFee.parking ? `停車 $${money(o.finalFee.parking)}` : '', o.finalFee.upstairs ? `上樓 $${money(o.finalFee.upstairs)}` : ''].filter(Boolean).join(' · ')}` : ''}
       </div>` : ''}
 
     <div class="o-foot">
@@ -1171,7 +1195,7 @@ function submitOrder(){
     pricing: d.pricing,
     askPrice: d.pricing === 'fixed' ? num(d.askPrice) : null,
     budget: d.pricing === 'quote' && d.budget ? num(d.budget) : null,
-    upstairs: d.mode === 'van' ? !!d.upstairs : false,
+    upstairs: !!d.upstairs,
     offers: [],
     status: 'open',
     createdAt: Date.now(), recastAt: Date.now(),
@@ -1212,7 +1236,8 @@ function openSuccess(o){
     <div class="summary-line"><span>送貨方式</span><b>${m.name} · ${esc(o.weight)}kg</b></div>
     <div class="summary-line"><span>價錢</span><b>${price}</b></div>
     <div class="summary-line"><span>平台費</span><b>$0</b></div>
-    <div class="summary-line"><span>附加費</span><b>${o.mode === 'walk' ? '無' : o.mode === 'car' ? '隧道／停車另議' : '隧道／停車另計'}</b></div>
+    <div class="summary-line"><span>附加費</span><b>${o.mode === 'walk' ? '無隧道／停車' : o.mode === 'car' ? '隧道／停車另議' : '隧道／停車另計'}</b></div>
+    ${o.upstairs ? `<div class="summary-line"><span>上樓</span><b>需要 · 泊車約 $${UPSTAIRS_FEE}（完成時按實際）</b></div>` : ''}
     <div class="notice" style="margin-top:11px">${icoInfo()} 已向在線同類司機播報。佢哋可以開價或者直接接單，最後由你揀。</div>
     <div class="modal-foot">
       <button class="btn warn" data-act="closeAndOrders">睇我的訂單</button>
@@ -1243,7 +1268,7 @@ function openDetail(oid){
       <div class="summary-line"><span>收貨人</span><b>${esc(o.consignee.name)} ${esc(o.consignee.phone)}</b></div>
       <div class="summary-line"><span>價錢</span><b>${price}</b></div>
       ${o.mode !== 'walk' ? `<div class="summary-line"><span>附加費</span><b>${o.mode === 'car' ? '隧道／停車另議' : '隧道／停車另計'}</b></div>` : ''}
-      ${o.mode === 'van' && o.upstairs ? `<div class="summary-line"><span>上樓</span><b>需要 · 費用自傾</b></div>` : ''}
+      ${o.upstairs ? `<div class="summary-line"><span>上樓</span><b>需要 · 泊車約 $${UPSTAIRS_FEE}（完成時按實際）</b></div>` : ''}
       ${o.note ? `<div class="summary-line"><span>備註</span><b>${esc(o.note)}</b></div>` : ''}
       ${o.cancelNote ? `<div class="summary-line"><span>上一次取消</span><b>${esc(o.cancelNote)}</b></div>` : ''}
       ${dp ? `<div class="summary-line"><span>接貨人</span><b>${esc(dp.name)} · ${esc(o.driverPhone)}${dp.plate ? ' · ' + esc(dp.plate) : ''}</b></div>` : ''}
@@ -1263,11 +1288,16 @@ function acceptOffer(oid, fid){
   const o = db.orders.find(x => x.id === oid); if(!o) return;
   const f = (o.offers || []).find(x => x.id === fid); if(!f) return;
   if(o.status !== 'open') return toast('呢張單已經有人接咗', 'err');
+  if(f.status !== 'open') return toast('呢個報價已經失效', 'err');
   o.status = 'accepted'; o.driverPhone = f.driverPhone; o.agreedPrice = f.price; o.acceptedAt = Date.now();
-  o.offers.forEach(x => { x.status = x.id === f.id ? 'accepted' : 'declined'; });
-  pushNotice(f.driverPhone, '貨主接受咗你嘅出價 $' + money(f.price), `${o.pickup.district} → ${o.drop.district} · 請準備提貨`, o.id, 'accepted');
+  (o.offers || []).forEach(x => { x.status = x.id === f.id ? 'accepted' : 'declined'; });
+  if(session.phone === f.driverPhone){
+    pushNotice(o.shipperPhone, '接貨人接受咗你嘅還價 $' + money(f.price), `${o.pickup.district} → ${o.drop.district} · 已配對，請準備交收`, o.id, 'accepted');
+  }else{
+    pushNotice(f.driverPhone, '貨主接受咗你嘅出價 $' + money(f.price), `${o.pickup.district} → ${o.drop.district} · 請準備提貨`, o.id, 'accepted');
+  }
   saveDB(); closeModal(); render();
-  toast('已接受 $' + money(f.price) + '，等司機提貨', 'ok');
+  toast(session.phone === f.driverPhone ? '已接受 $' + money(f.price) + '，請準備提貨' : '已接受 $' + money(f.price) + '，等司機提貨', 'ok');
   openContactReveal(o);
 }
 
@@ -1275,6 +1305,7 @@ function declineOffer(oid, fid){
   const o = db.orders.find(x => x.id === oid); if(!o) return;
   const f = (o.offers || []).find(x => x.id === fid); if(!f) return;
   f.status = 'declined';
+  pushNotice(f.driverPhone, '貨主拒絕咗你嘅出價 $' + money(f.price), `${o.pickup.district} → ${o.drop.district}`, o.id, 'declined');
   saveDB(); render(); toast('已拒絕呢個報價');
 }
 
@@ -1334,7 +1365,11 @@ function openCancelOrder(oid){
 function confirmCancelOrder(oid){
   const o = db.orders.find(x => x.id === oid); if(!o) return;
   o.status = 'cancelled'; o.cancelNote = ($('#cancelReason').value || '').trim(); o.cancelledAt = Date.now();
-  if(o.driverPhone) pushNotice(o.driverPhone, '貨主取消咗張單', `${o.pickup.district} → ${o.drop.district}${o.cancelNote ? ' · ' + o.cancelNote : ''}`, o.id, 'cancelled');
+  const targets = new Set();
+  if(o.driverPhone) targets.add(o.driverPhone);
+  (o.offers || []).forEach(f => { if(f.status === 'open' && f.driverPhone) targets.add(f.driverPhone); });
+  targets.forEach(phone => pushNotice(phone, '貨主取消咗張單',
+    `${o.pickup.district} → ${o.drop.district}${o.cancelNote ? ' · ' + o.cancelNote : ''}`, o.id, 'cancelled'));
   saveDB(); closeModal(); render(); toast('訂單已取消');
 }
 
@@ -1448,7 +1483,7 @@ function boardCard(o, p){
       <span class="badge">${fmtKm(o.km)}</span>
       <span class="badge">提貨 ${tlab(o, o.pickup.from)}–${esc(o.pickup.to)}</span>
       ${o.mode !== 'walk' ? `<span class="badge">${o.mode === 'car' ? '隧道／停車另議' : '隧道／停車另計'}</span>` : ''}
-      ${o.mode === 'van' && o.upstairs ? `<span class="badge">可上樓 · 費用自傾</span>` : ''}
+      ${o.upstairs ? `<span class="badge">可上樓 · 泊車約 $${UPSTAIRS_FEE}</span>` : ''}
     </div>
     <div class="o-foot">
       <div class="o-price" style="line-height:1.2">${price}</div>
@@ -1485,10 +1520,10 @@ function openQuote(oid){
       <div class="summary-line"><span>提貨</span><b>${tlab(o, o.pickup.from)}–${esc(o.pickup.to)}</b></div>
       <div class="summary-line"><span>送達時限</span><b>${tlab(o, o.drop.deadline)} 前</b></div>
       ${o.mode !== 'walk' ? `<div class="summary-line"><span>附加費</span><b>${o.mode === 'car' ? '隧道／停車另議' : '隧道／停車另計'}</b></div>` : ''}
-      ${o.mode === 'van' && o.upstairs ? `<div class="summary-line"><span>上樓</span><b>需要 · 費用自傾</b></div>` : ''}
+      ${o.upstairs ? `<div class="summary-line"><span>上樓</span><b>需要 · 泊車約 $${UPSTAIRS_FEE}（完成時按實際）</b></div>` : ''}
       <div class="field" style="margin-top:11px"><label>你開幾錢（HK$）</label><input type="number" min="1" step="1" id="quotePrice" value="${def}" placeholder="100"></div>
       <div class="field" style="margin-top:9px"><label>同貨主講兩句（可留空）</label><input type="text" id="quoteNote" maxlength="60" placeholder="例：順路，45 分鐘到，隧道實報"></div>
-      <div class="notice calm" style="margin-top:10px">${icoInfo()} ${o.pricing === 'fixed' ? '貨主定價只係參考：你可以照價接單，亦可以出高過或低過嘅價；貨主接受先算成交。' : '出價未算成交。貨主可以接受、還價，或者揀其他司機。'}</div>
+      <div class="notice calm" style="margin-top:10px">${icoInfo()} ${o.upstairs ? `上樓泊車費約 $${UPSTAIRS_FEE}，完成時另加，唔包喺呢個報價。` : (o.pricing === 'fixed' ? '貨主定價只係參考：你可以照價接單，亦可以出高過或低過嘅價；貨主接受先算成交。' : '出價未算成交。貨主可以接受、還價，或者揀其他司機。')}</div>
     </div>
     <div class="modal-foot">
       <button class="btn warn" data-act="submitQuote" data-id="${o.id}">${mine ? '更新出價' : '送出出價'}</button>
@@ -1561,8 +1596,9 @@ function openContactReveal(o){
       <div class="summary-line" style="margin-top:10px"><span>提貨</span><b>${tlab(o, o.pickup.from)}–${esc(o.pickup.to)}</b></div>
       <div class="summary-line"><span>送達時限</span><b>${tlab(o, o.drop.deadline)} 前</b></div>
       <div class="summary-line"><span>貨物</span><b>${esc(o.goods.type)} · ${esc(o.goods.pieces)} 件 · ${esc(o.weight)}kg</b></div>
-      ${o.mode !== 'walk' ? `<div class="summary-line"><span>附加費</span><b>${o.mode === 'car' ? '隧道／停車另議' : '隧道／停車另計'}${o.upstairs ? ' · 上樓自傾' : ''}</b></div>` : ''}
-      <div class="bid-hint" style="margin-top:10px">提貨前請先電話確認；貨到路邊交收，步兵同私家車唔上樓。</div>
+      ${o.mode !== 'walk' ? `<div class="summary-line"><span>附加費</span><b>${o.mode === 'car' ? '隧道／停車另議' : '隧道／停車另計'}</b></div>` : ''}
+      ${o.upstairs ? `<div class="summary-line"><span>上樓</span><b>需要 · 泊車約 $${UPSTAIRS_FEE}（完成時按實際）</b></div>` : ''}
+      <div class="bid-hint" style="margin-top:10px">提貨前請先電話確認；送到門口或樓上，上樓加一小時泊車費（一般 $${UPSTAIRS_FEE}）。</div>
     </div>
     <div class="modal-foot">
       <a class="btn warn" href="tel:${esc(callPhone)}">致電${isDriver ? '出貨人' : '接貨人'} ${esc(callName)}</a>
@@ -1612,7 +1648,7 @@ function jobCard(o, p){
       <span class="badge">提貨 ${tlab(o, o.pickup.from)}–${esc(o.pickup.to)}</span>
       <span class="badge">${tlab(o, o.drop.deadline)} 前</span>
       ${o.mode !== 'walk' ? `<span class="badge">${o.mode === 'car' ? '隧道／停車另議' : '隧道／停車另計'}</span>` : ''}
-      ${o.mode === 'van' && o.upstairs ? `<span class="badge">上樓費自傾</span>` : ''}
+      ${o.upstairs ? `<span class="badge">可上樓 · 泊車約 $${UPSTAIRS_FEE}</span>` : ''}
     </div>
     ${stepBar(o.status)}
     <div class="o-note">
@@ -1666,7 +1702,7 @@ function openDeliver(oid){
   const isCar = o.mode === 'car', isVan = o.mode === 'van';
   openModal(`
     <div class="modal-head">
-      <div><h3>完成交收</h3><small>協定車費 $${money(o.agreedPrice)} · ${isVan ? '隧道／停車另計' : isCar ? '隧道／停車另議' : '步兵'}</small></div>
+      <div><h3>完成交收</h3><small>協定車費 $${money(o.agreedPrice)} · ${isVan ? '隧道／停車另計' : isCar ? '隧道／停車另議' : '步兵'}${o.upstairs ? ` · 上樓泊車約 $${UPSTAIRS_FEE}` : ''}</small></div>
       <button class="x-btn" data-act="closeModal"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
     <div class="modal-body">
@@ -1677,8 +1713,8 @@ function openDeliver(oid){
         <div class="field"><label>隧道費（HK$）</label><input type="number" min="0" step="1" id="tunnelFee" value="0"></div>
         <div class="field"><label>停車場費（HK$）</label><input type="number" min="0" step="1" id="parkingFee" value="0"></div>
       </div>` : ''}
-      ${isVan && o.upstairs ? `
-      <div class="field" style="margin-top:9px"><label>上樓費（同貨主傾好，HK$）</label><input type="number" min="0" step="1" id="upstairsFee" value="0"></div>` : ''}
+      ${o.upstairs ? `
+      <div class="field" style="margin-top:9px"><label>上樓泊車費（一般 $${UPSTAIRS_FEE}）</label><input type="number" min="0" step="1" id="upstairsFee" value="${UPSTAIRS_FEE}"></div>` : ''}
       <div class="field" style="margin-top:10px"><label>收款方式</label>
         <select id="payMethod">${PAYS.map(x => `<option>${x}</option>`).join('')}</select>
       </div>
@@ -1783,7 +1819,9 @@ function renderMyOffers(p){
 
 function withdrawOffer(oid, fid){
   const o = db.orders.find(x => x.id === oid); if(!o) return;
-  o.offers = (o.offers || []).filter(f => f.id !== fid);
+  const f = (o.offers || []).find(x => x.id === fid); if(!f) return;
+  pushNotice(o.shipperPhone, '接貨人撤回咗出價 $' + money(f.price), `${o.pickup.district} → ${o.drop.district}`, o.id, 'withdrawn');
+  o.offers = (o.offers || []).filter(x => x.id !== fid);
   saveDB(); render(); toast('已撤回報價');
 }
 
@@ -1898,7 +1936,6 @@ function onClick(e){
   if(act === 'setMode'){
     if(!ui.draft) return;
     ui.draft.mode = el.dataset.mode;
-    if(ui.draft.mode !== 'van') ui.draft.upstairs = false;
     render(); return;
   }
   if(act === 'setPricing'){ ui.draft.pricing = el.dataset.p; render(); return; }
@@ -1911,7 +1948,7 @@ function onClick(e){
   if(act === 'detail'){ openDetail(id); return; }
   if(act === 'recast'){
     const o = db.orders.find(x => x.id === id); if(!o) return;
-    o.recastAt = Date.now(); saveDB();
+    o.recastAt = Date.now(); notifyNewOrder(o); saveDB();
     speak(announceText(o)); render(); toast('已重新播報', 'ok'); return;
   }
   if(act === 'cancelOrder'){ openCancelOrder(id); return; }
@@ -2102,6 +2139,7 @@ $('#modal').addEventListener('click', e => { if(e.target.id === 'modal') closeMo
 function seedDB(){
   const base = Date.now();
   db.orders = [];
+  db.notices = [];
   db.profiles = {
     '91234567': { phone:'91234567', role:'shipper', name:'陳記果欄', mode:'car', plate:'', online:false, announce:true, areas:[], createdAt: base - 86400000 },
     '91230000': { phone:'91230000', role:'driver', name:'阿強', mode:'car', plate:'AB 1234', online:true, announce:true, areas:[], createdAt: base - 86400000 }
@@ -2121,7 +2159,7 @@ function seedDB(){
       pricing: cfg.pricing,
       askPrice: cfg.pricing === 'fixed' ? cfg.price : null,
       budget: cfg.pricing === 'quote' ? (cfg.budget || null) : null,
-      upstairs: cfg.mode === 'van' && !!cfg.upstairs,
+      upstairs: !!cfg.upstairs,
       offers: [],
       status: 'open',
       createdAt: base - i * 60000, recastAt: base - i * 60000,
@@ -2142,10 +2180,10 @@ function seedDB(){
   db.orders = [
     mk({ mode:'walk', weight:8, fromD:'離島', fromAddr:'東涌站 A 出口（路邊）', toD:'離島', toAddr:'機場一號客運大樓（路邊）',
          t1:45, t2:100, t3:190, goods:'包裹', desc:'2 件已封箱文件袋', pieces:2, cName:'陳太', cPhone:'61234567',
-         pricing:'fixed', price:80, note:'唔使上樓，路邊交收' }, 0),
+         pricing:'fixed', price:80, note:'今次唔使上樓，可以路邊交收' }, 0),
     mk({ mode:'walk', weight:1, fromD:'灣仔', fromAddr:'灣仔地鐵站 A3 出口', toD:'中西區', toAddr:'中環砵典乍街 12 號門口',
          t1:35, t2:75, t3:150, goods:'文件', desc:'一個 A4 公文袋，已封口', pieces:1, cName:'李小姐', cPhone:'62345678',
-         pricing:'quote', budget:60 }, 1),
+         pricing:'quote', budget:60, upstairs:true, note:'送到 3 樓，上樓泊車約 $20' }, 1),
     mk({ mode:'car', weight:12, fromD:'油尖旺', fromAddr:'油麻地果欄 A 座門口（路邊）', toD:'沙田', toAddr:'沙田第一城 49 座對出巴士站',
          t1:55, t2:110, t3:240, goods:'生果', desc:'3 箱日本蜜瓜，已封箱', pieces:3, cName:'黃先生', cPhone:'63456789',
          pricing:'quote', budget:180, offer:160, note:'果欄門口可以短暫停車' }, 2),
@@ -2154,7 +2192,7 @@ function seedDB(){
          pricing:'fixed', price:120 }, 3),
     mk({ mode:'van', weight:25, fromD:'油尖旺', fromAddr:'油麻地果欄 B 座門口（路邊）', toD:'荃灣', toAddr:'荃灣楊屋道 8 號樓下',
          t1:65, t2:120, t3:250, goods:'生果', desc:'5 箱時令生果，已封箱', pieces:5, cName:'何太', cPhone:'65678901',
-         pricing:'fixed', price:180, upstairs:true, note:'要上 3 樓，上樓費同司機傾' }, 4),
+         pricing:'fixed', price:180, upstairs:true, note:'要上 3 樓，上樓泊車約 $20' }, 4),
     mk({ mode:'van', weight:40, fromD:'觀塘', fromAddr:'觀塘偉業街 128 號停車場入口', toD:'沙田', toAddr:'沙田火炭山尾街 23 號地下',
          t1:75, t2:130, t3:270, goods:'其他', desc:'兩箱傢俬配件，已封箱', pieces:2, cName:'張太', cPhone:'66789012',
          pricing:'quote', budget:400, note:'要貨van，私家車載唔到' }, 5)
