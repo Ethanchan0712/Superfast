@@ -1,5 +1,5 @@
 /* =========================================================
-   快送 v2 · 單檔示範版
+   快送 v2.4 · PWA + 後端同步
    角色：出貨人（出貨人） / 接貨人（步兵、私家車、貨van）
    收費：出貨人定價 或 司機開價，雙方議價，出貨人最後決定
    ========================================================= */
@@ -7,7 +7,7 @@
 /* ---------- 模組 ---------- */
 import { DB_KEY, SESSION_KEY, CHANNEL, APP_VERSION, APP_VER_TAG, UPSTAIRS_FEE, MODES, GOODS, PAYS, DISTRICTS, AREAS } from './config.js';
 import { $, pad2, esc, money, num, fmtKm, uid, code4, nowMin, timeToMin, tlab, clockLabel, clock, todayStr, haversine, estKm, meterFare } from './utils.js';
-import { speak, announceText } from './speech.js';
+import { speak, unlockSpeech, announceText } from './speech.js';
 import { registerServiceWorker, showSystemNotification, listenServiceWorkerMessages } from './pwa.js';
 
 
@@ -18,6 +18,10 @@ let ui = { tab:'new', filter:{mode:'全部', district:'全部', sort:'new'}, dra
 let lastAnnouncedAt = 0;
 let lastNoticeAt = 0;
 let typingTimer = null;
+let serverMode = false;
+let serverRev = 0;
+let serverSaveTimer = null;
+let pushReady = false;
 
 function migrateDB(d){
   d.schema = 3;
@@ -57,9 +61,24 @@ function loadDB(){
   }
   return migrateDB({ rev:0, orders:[], profiles:{} });
 }
-function saveDB(){ db.schema = 3; db.rev = (db.rev || 0) + 1; localStorage.setItem(DB_KEY, JSON.stringify(db)); }
-function setSession(phone){ session = { phone }; sessionStorage.setItem(SESSION_KEY, JSON.stringify(session)); }
-function clearSession(){ session = null; sessionStorage.removeItem(SESSION_KEY); }
+function saveDB(){
+  db.schema = 3;
+  db.rev = (db.rev || 0) + 1;
+  localStorage.setItem(DB_KEY, JSON.stringify(db));
+  if(serverMode) queueServerSave();
+}
+function setSession(phone){
+  session = { phone };
+  // 長期登入：關閉瀏覽器／手機 App 後仍保留
+  const raw = JSON.stringify(session);
+  try{ localStorage.setItem(SESSION_KEY, raw); }catch(e){}
+  try{ sessionStorage.setItem(SESSION_KEY, raw); }catch(e){}
+}
+function clearSession(){
+  session = null;
+  try{ localStorage.removeItem(SESSION_KEY); }catch(e){}
+  try{ sessionStorage.removeItem(SESSION_KEY); }catch(e){}
+}
 function me(){ return session ? db.profiles[session.phone] : null; }
 function isTyping(){
   const a = document.activeElement;
@@ -151,7 +170,7 @@ function renderLogin(){
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#12130f" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
         </button>
       </div>
-      <div class="login-foot">示範版：資料只存喺你部機嘅瀏覽器，唔會上傳。唔係真實交易平台。</div>
+      <div class="login-foot">示範版：電話直登，唔使驗證碼。${serverMode ? '後端版：訂單會同步到伺服器，其他裝置都見到。' : '純靜態版：資料只存喺你部機嘅瀏覽器。'} 唔係真實交易平台。</div>
       <div class="notice calm demo-note">${icoInfo()} 想試完整流程：開兩個瀏覽器視窗（唔好複製分頁），一個登入出貨人、一個登入接貨人。</div>
     </section>
   </main>`;
@@ -173,10 +192,17 @@ function doLogin(){
     const p = db.profiles[phone];
     p.role = ui.rolePick;
     if(name) p.name = name;
-    if(ui.rolePick === 'driver') p.mode = ui.modePick;
+    if(ui.rolePick === 'driver'){
+      p.mode = ui.modePick;
+      // 接貨人一登入就上線，避免之前關過「上線」之後收唔到新單
+      p.online = true;
+      p.announce = true;
+    }
   }
   saveDB();
   setSession(phone);
+  // 登入資料立即推上後端，避免被其他裝置嘅舊快照蓋走
+  if(serverMode) pushServerState();
   lastAnnouncedAt = Date.now();
   lastNoticeAt = Date.now();
   ui.tab = ui.rolePick === 'driver' ? 'board' : 'new';
@@ -184,6 +210,13 @@ function doLogin(){
   ui.draft = null;
   render();
   toast('已登入 · ' + (ui.rolePick === 'driver' ? '接貨人' : '出貨人'), 'ok');
+  const profile = db.profiles[phone];
+  if(ui.rolePick === 'driver' && profile.announce){
+    // 登入本身係使用者手勢，順便解鎖手機語音
+    setTimeout(() => speak('快送已登入。有新單會即時播報。'), 250);
+  }
+  // 登入係手勢：後端版即時請求通知權限（已授權就靜默訂閱）
+  if(serverMode) enableServerPush(true);
 }
 
 /* ---------- 頂欄 ---------- */
@@ -279,8 +312,8 @@ function rulesBody(){
   <div class="sec">
     <div class="sec-head"><span class="sec-no">8</span><h3>示範版做咗／未做</h3></div>
     <div class="sec-body">
-      <p><b>已做</b>：電話登入、三種送法、定價／報價／議價、接單、提貨碼、交收碼、附加費、語音播報、跨視窗同步。<br>
-      <b>未做</b>：真後端、真 SMS、真地圖距離、線上支付、管理員後台、正式部署。資料只存喺你部機。</p>
+      <p><b>已做</b>：電話登入、三種送法、包上樓 $20 泊車、定價／報價／議價、接單、提貨碼、交收碼、附加費、語音播報、後端跨裝置同步、SSE 即時更新、Web Push、長期登入、自動更新。<br>
+      <b>未做</b>：SMS OTP、真地圖距離、線上支付、管理員後台、正式營運認證。${serverMode ? '資料存喺後端；後端重啟有機會清空（免費主機）。' : '純靜態版資料只存本機。'}</p>
     </div>
   </div>`;
 }
@@ -1016,6 +1049,8 @@ function renderBoard(p){
     <button class="switch ${p.announce ? 'on' : ''}" data-act="toggleAnnounce">
       <span class="track"><span class="knob"></span></span>語音播報
     </button>
+    <button class="btn sm ghost" data-act="testSpeech">測試語音</button>
+    <button class="btn sm ghost" data-act="enablePush">開啟新單通知</button>
     <span class="badge ink">${m.name}</span>
     <span class="badge">${list.length} 張未接</span>
     <button class="btn sm ghost" style="margin-left:auto" data-act="openSettings">改送貨方式</button>
@@ -1034,7 +1069,15 @@ function renderBoard(p){
   </div>
   <div class="notice calm" style="margin-bottom:10px">${icoInfo()} 你只會見到 <b>${m.name}</b> 嘅單。想接其他類型，去「設定」改送貨方式。</div>
   ${list.length ? `<div class="orders">${list.map(o => boardCard(o, p)).join('')}</div>` :
-    `<div class="empty"><b>而家未有${m.name}單</b>有新單會即時播報；你可以轉去「我的報價」睇下有冇出貨人還價。</div>`}`;
+    `<div class="empty"><b>而家未有${m.name}單</b>
+      有新單會即時播報；你可以轉去「我的報價」睇下有冇出貨人還價。
+      <div class="mini" style="margin-top:10px;line-height:1.7">如果出貨人話已經出單，請檢查：<br>
+      ① 後端版：出貨人同接貨人可以用<b>兩部電話／兩個瀏覽器</b>；純靜態版只可以同一個瀏覽器<br>
+      ② 用<b>另一個電話號碼</b>登入，唔好同出貨人同號碼<br>
+      ③ 送貨方式要一樣（步兵／私家車／貨van）<br>
+      ④ 大廳要顯示「上線中」同「語音播報」開啟<br>
+      ⑤ 後端版要確認網址係後端主機，唔係 GitHub Pages</div>
+    </div>`}`;
 }
 
 function boardCard(o, p){
@@ -1409,7 +1452,7 @@ function withdrawOffer(oid, fid){
 function renderSettings(p){
   return `
   <div class="sec">
-    <div class="sec-head"><span class="sec-no">1</span><h3>你嘅資料</h3><small>只存喺你部機</small></div>
+    <div class="sec-head"><span class="sec-no">1</span><h3>你嘅資料</h3><small>${serverMode ? '同步到後端' : '只存喺你部機'}</small></div>
     <div class="sec-body">
       <div class="grid two">
         <div class="field"><label>稱呼</label><input type="text" id="setName" maxlength="16" value="${esc(p.name)}"></div>
@@ -1454,7 +1497,7 @@ function renderSettings(p){
   <div class="sec">
     <div class="sec-head"><span class="sec-no">3</span><h3>示範資料</h3></div>
     <div class="sec-body">
-      <div class="settings-hint">呢個版本所有資料只存喺瀏覽器（localStorage）。清除瀏覽器資料就會回復種子示範單。</div>
+      <div class="settings-hint">${serverMode ? '後端版：資料會同步到伺服器；清除瀏覽器資料後重新登入會由後端取回。' : '純靜態版：所有資料只存喺瀏覽器（localStorage）；清除瀏覽器資料就會回復種子示範單。'}</div>
       <div class="btn-row" style="margin-top:9px">
         <button class="btn sm ghost" data-act="resetDemo">重設示範資料</button>
       </div>
@@ -1496,6 +1539,15 @@ function onClick(e){
   if(act === 'openNotices'){ openNotices(); return; }
   if(act === 'openNotice'){ openNotice(el.dataset.id); return; }
   if(act === 'askNotify'){ askNotify(); return; }
+  if(act === 'enablePush'){ enableServerPush(true); return; }
+  if(act === 'testSpeech'){
+    if(!p) return;
+    if(!('speechSynthesis' in window)){ toast('呢個瀏覽器未支援語音播報', 'err'); return; }
+    unlockSpeech();
+    speak('快送語音測試。步兵，東涌去機場，八公斤，等司機報價。');
+    toast('已播放測試語音；如果冇聲，請檢查媒體音量／靜音掣', 'ok');
+    return;
+  }
   if(act === 'checkUpdate'){ checkUpdate(true); return; }
   if(act === 'doUpdate'){ applyUpdate(true); return; }
   if(act === 'hideUpdate'){ hideUpdateBar(); return; }
@@ -1598,7 +1650,7 @@ function openHelp(){
       <button class="x-btn" data-act="closeModal"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
     <div class="modal-body">
-      <div class="notice">${icoInfo()} 開兩個瀏覽器視窗（唔好「複製分頁」），一個登入出貨人、一個登入接貨人。資料只存同一個瀏覽器，唔會跨裝置同步。</div>
+      <div class="notice">${icoInfo()} ${serverMode ? '後端版：開兩個瀏覽器／兩部電話，一個登入出貨人、一個登入接貨人，訂單會即時同步。' : '純靜態版：開兩個瀏覽器視窗（唔好「複製分頁」），一個登入出貨人、一個登入接貨人；只會喺同一個瀏覽器同步。'}</div>
       <div class="hr"></div>
       <div class="summary-line"><span>出貨人示範號</span><b>9123 4567</b></div>
       <div class="summary-line"><span>接貨人示範號</span><b>9876 5432</b></div>
@@ -1609,7 +1661,7 @@ function openHelp(){
       2. 接貨人登入 → 大廳見到同類單 → 報價或直接接單。<br>
       3. 出貨人喺「我的訂單」睇出價 → 接受／還價 → 揀邊個送；一接受即彈出雙方電話。<br>
       4. 接貨人確認提貨（輸入提貨碼）→ 完成交收（輸入交收碼＋附加費）。</p>
-      <div class="notice calm" style="margin-top:10px">${icoInfo()} 資料只存喺你部機嘅瀏覽器。想由頭再試，去接貨人「設定」→ 重設示範資料。</div>
+      <div class="notice calm" style="margin-top:10px">${icoInfo()} ${serverMode ? '資料同步到後端；想由頭再試，去接貨人「設定」→ 重設示範資料。' : '資料只存喺你部機嘅瀏覽器。想由頭再試，去接貨人「設定」→ 重設示範資料。'}</div>
       <div class="summary-line" style="margin-top:10px"><span>而家版本</span><b>${APP_VER_TAG}（更新會保留舊資料）</b></div>
     </div>
     <div class="modal-foot"><button class="btn ghost" data-act="closeModal">閂</button></div>`);
@@ -1660,6 +1712,7 @@ function openNotice(id){
   toast(n.title);
 }
 async function askNotify(){
+  if(serverMode){ await enableServerPush(true); openNotices(); return; }
   if(!('Notification' in window)){ toast('呢個瀏覽器未支援桌面通知', 'err'); return; }
   try{
     const r = await Notification.requestPermission();
@@ -1782,38 +1835,177 @@ function seedDB(){
 /* =========================================================
    跨視窗同步 + 播報
    ========================================================= */
+function absorbNextDB(next){
+  if(!next || next.orders === undefined) return;
+  const prevProfiles = db && db.profiles ? db.profiles : {};
+  const prevOrders = db && Array.isArray(db.orders) ? db.orders : [];
+  db = migrateDB(next);
+  // 保留本機未同步嘅新帳戶／新單，避免被較舊嘅遠端快照蓋走
+  Object.keys(prevProfiles).forEach(phone => {
+    if(!db.profiles[phone]) db.profiles[phone] = prevProfiles[phone];
+  });
+  prevOrders.forEach(o => {
+    if(o && o.id && !db.orders.some(x => x.id === o.id)) db.orders.push(o);
+  });
+  localStorage.setItem(DB_KEY, JSON.stringify(db));
+  const p = me();
+  if(p){
+    const freshN = (db.notices || []).filter(n => n.phone === p.phone && n.at > lastNoticeAt);
+    if(freshN.length){
+      freshN.sort((a, b) => a.at - b.at).forEach((n, i) => {
+        showSystemNotice(n);
+        if(p.announce && n.type !== 'newOrder') setTimeout(() => speak(n.title + '。' + n.body), i * 350);
+      });
+      const lastN = freshN[freshN.length - 1];
+      if(lastN.type === 'newOrder') toast('新單：' + lastN.body, 'ok');
+      else toast(lastN.title);
+      lastNoticeAt = lastN.at;
+    }
+  }
+  if(p && p.role === 'driver' && p.online){
+    const fresh = db.orders.filter(o => o.status === 'open' && o.mode === p.mode &&
+      (o.recastAt || o.createdAt) > lastAnnouncedAt && o.shipperPhone !== p.phone);
+    if(fresh.length){
+      if(p.announce) fresh.forEach((o, i) => setTimeout(() => speak(announceText(o)), i * 400));
+      toast('有 ' + fresh.length + ' 張新單／重新播報');
+    }
+    lastAnnouncedAt = Date.now();
+  }
+  if(!isTyping()) render();
+}
+
 function refreshFromDB(){
   try{
     const raw = localStorage.getItem(DB_KEY);
     if(!raw) return;
     const next = JSON.parse(raw);
     if(!next || next.orders === undefined || next.rev === db.rev) return;
-    db = migrateDB(next);
-    const p = me();
-    if(p){
-      const freshN = (db.notices || []).filter(n => n.phone === p.phone && n.at > lastNoticeAt);
-      if(freshN.length){
-        freshN.sort((a, b) => a.at - b.at).forEach((n, i) => {
-          showSystemNotice(n);
-          if(p.announce && n.type !== 'newOrder') setTimeout(() => speak(n.title + '。' + n.body), i * 350);
-        });
-        const lastN = freshN[freshN.length - 1];
-        if(lastN.type !== 'newOrder') toast(lastN.title);
-        lastNoticeAt = lastN.at;
-      }
-    }
-    if(p && p.role === 'driver' && p.online){
-      const fresh = db.orders.filter(o => o.status === 'open' && o.mode === p.mode &&
-        (o.recastAt || o.createdAt) > lastAnnouncedAt && o.shipperPhone !== p.phone);
-      if(fresh.length){
-        if(p.announce) fresh.forEach((o, i) => setTimeout(() => speak(announceText(o)), i * 400));
-        toast('有 ' + fresh.length + ' 張新單／重新播報');
-      }
-      lastAnnouncedAt = Date.now();
-    }
-    if(!isTyping()) render();
+    absorbNextDB(next);
   }catch(e){}
 }
+
+/* =========================================================
+   後端同步（同一份訂單喺所有裝置共享）
+   ========================================================= */
+async function fetchServerState(){
+  try{
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 4500);
+    const r = await fetch('./api/state?ts=' + Date.now(), { cache:'no-store', signal: ctrl.signal });
+    clearTimeout(timer);
+    if(!r.ok) return null;
+    const data = await r.json();
+    if(data && typeof data.rev === 'number' && data.db !== undefined) return data;
+    return null;
+  }catch(e){ return null; }
+}
+
+function queueServerSave(){
+  if(!serverMode) return;
+  clearTimeout(serverSaveTimer);
+  serverSaveTimer = setTimeout(pushServerState, 180);
+}
+
+async function pushServerState(){
+  if(!serverMode) return;
+  try{
+    const r = await fetch('./api/state?ts=' + Date.now(), {
+      method:'PUT',
+      headers:{ 'Content-Type':'application/json' },
+      cache:'no-store',
+      body: JSON.stringify({ db })
+    });
+    if(!r.ok) throw new Error('http ' + r.status);
+    const data = await r.json();
+    if(typeof data.rev === 'number') serverRev = data.rev;
+  }catch(e){
+    // 後端暫時離線：保留本機資料，稍後再試
+    if(serverMode) setTimeout(() => { if(serverMode) pushServerState(); }, 2500);
+  }
+}
+
+function startServerEvents(){
+  if(!serverMode || typeof EventSource === 'undefined') return;
+  try{
+    const es = new EventSource('./api/events');
+    es.addEventListener('state', async (ev) => {
+      let info = null;
+      try{ info = JSON.parse(ev.data); }catch(e){ return; }
+      if(!info || typeof info.rev !== 'number' || info.rev === serverRev) return;
+      const remote = await fetchServerState();
+      if(remote && remote.rev !== serverRev){
+        serverRev = remote.rev;
+        absorbNextDB(remote.db);
+      }
+    });
+  }catch(e){}
+}
+
+function urlBase64ToUint8Array(base64String){
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  const arr = new Uint8Array(raw.length);
+  for(let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+
+async function enableServerPush(requestPermission){
+  if(!serverMode){
+    if(requestPermission) toast('要使用後端版先可以跨裝置推送通知', 'err');
+    return;
+  }
+  if(!('Notification' in window) || !('PushManager' in window) || !('serviceWorker' in navigator)){
+    if(requestPermission) toast('呢個瀏覽器未支援 Web Push 通知', 'err');
+    return;
+  }
+  if(!session){ if(requestPermission) toast('請先登入', 'err'); return; }
+  let perm = Notification.permission;
+  if(perm === 'default' && requestPermission){
+    if(requestPermission) toast('正在開啟通知…');
+    try{
+      perm = await Promise.race([
+        Notification.requestPermission(),
+        new Promise(r => setTimeout(() => r('default'), 12000))
+      ]);
+    }catch(e){ perm = 'denied'; }
+  }
+  if(perm !== 'granted'){
+    if(requestPermission) toast('通知未開啟；請喺瀏覽器設定允許通知', 'err');
+    return;
+  }
+  try{
+    let reg = await navigator.serviceWorker.getRegistration();
+    if(!reg){
+      reg = await Promise.race([
+        navigator.serviceWorker.ready,
+        new Promise(r => setTimeout(() => r(null), 5000))
+      ]);
+    }
+    if(!reg) throw new Error('Service Worker 未就緒');
+    const keyRes = await fetch('./api/push/key?ts=' + Date.now(), { cache:'no-store' });
+    const keyData = await keyRes.json();
+    if(!keyData.publicKey) throw new Error('no vapid key');
+    let sub = await reg.pushManager.getSubscription();
+    if(!sub){
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(keyData.publicKey)
+      });
+    }
+    await fetch('./api/push/subscribe', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ phone: session.phone, subscription: sub })
+    });
+    pushReady = true;
+    if(requestPermission) toast('已開啟新單通知', 'ok');
+  }catch(e){
+    console.warn('push setup failed', e);
+    if(requestPermission) toast('開啟通知失敗：' + (e.message || '請稍後再試'), 'err');
+  }
+}
+
 function startSync(){
   try{
     const bc = new BroadcastChannel(CHANNEL);
@@ -1852,7 +2044,8 @@ function applyUpdate(force, ver){
   const seen = sessionStorage.getItem('ks_autoupd') || '';
   if(ver && seen === ver) return false;
   const modalOpen = !$('#modal').hidden;
-  if(!session && !modalOpen && !isTyping()){
+  // 有登入都照自動更新：session 同訂單存喺 localStorage，唔會清走
+  if(!modalOpen && !isTyping()){
     sessionStorage.setItem('ks_autoupd', ver || APP_VERSION);
     location.replace(target);
     return true;
@@ -1882,26 +2075,44 @@ function startUpdateCheck(){
 /* =========================================================
    啟動
    ========================================================= */
-function boot(){
-  db = loadDB();
+async function boot(){
+  const local = loadDB();
+  let remote = null;
+  try{ remote = await fetchServerState(); }catch(e){}
+  if(remote){
+    serverMode = true;
+    serverRev = remote.rev;
+  }
+  if(remote && remote.db && Array.isArray(remote.db.orders)){
+    db = migrateDB(remote.db);
+    // 後端空白時，沿用本機示範資料
+    if(!db.orders.length && local.orders.length) db = local;
+  }else{
+    db = local;
+  }
   if(!db.orders.length){
     seedDB();
     saveDB();
   }
   lastNoticeAt = Date.now();
-  try{
-    const raw = sessionStorage.getItem(SESSION_KEY);
-    if(raw) session = JSON.parse(raw);
-  }catch(e){}
+  let raw = null;
+  try{ raw = sessionStorage.getItem(SESSION_KEY) || localStorage.getItem(SESSION_KEY); }catch(e){}
+  try{ if(raw) session = JSON.parse(raw); }catch(e){ session = null; }
   if(session && !db.profiles[session.phone]) session = null;
   ui.draft = null;
   render();
   startSync();
+  startServerEvents();
   startUpdateCheck();
   registerServiceWorker();
   listenServiceWorkerMessages((id) => {
     if((db.notices || []).some(n => n.id === id)) openNotice(id);
   });
+  if(serverMode && session) setTimeout(() => enableServerPush(false), 500);
+  try{
+    const wanted = new URLSearchParams(location.search).get('notice');
+    if(wanted) setTimeout(() => openNotice(wanted), 450);
+  }catch(e){}
 }
 
 document.addEventListener('click', onClick);

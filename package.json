@@ -1,0 +1,16 @@
+{
+  "name": "kuaisong",
+  "version": "2.4.0",
+  "private": true,
+  "description": "快送 · 香港貨運配對（PWA + Node 後端 + Web Push）",
+  "scripts": {
+    "start": "node server/server.js",
+    "dev": "node server/server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "web-push": "^3.6.7"
+  }
+}

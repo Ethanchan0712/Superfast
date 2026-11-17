@@ -2,7 +2,7 @@
    快送 · Service Worker
    版本更新時，請同時更新 CACHE_VERSION。
    ========================================================= */
-const CACHE_VERSION = 'ks-v2.3.1-r3';
+const CACHE_VERSION = 'ks-v2.4.0-r6';
 const CACHE_PREFIX = 'ks-';
 const CORE_ASSETS = [
   './',
@@ -46,6 +46,9 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   if(url.origin !== location.origin) return;
 
+  // API 一律直接上網，唔好被快取住（否則會讀到舊訂單）
+  if(url.pathname.startsWith('/api/')) return;
+
   // 導航：先網絡，失敗用快取 index，再退到 offline
   if(req.mode === 'navigate'){
     event.respondWith((async () => {
@@ -78,9 +81,28 @@ self.addEventListener('message', (event) => {
   if(event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
+self.addEventListener('push', (event) => {
+  let data = {};
+  try{ data = event.data ? event.data.json() : {}; }catch(e){ data = {}; }
+  const noticeId = data.noticeId || null;
+  const title = data.title || '快送新單';
+  const body = data.body || '有新訂單，打開快送睇下。';
+  event.waitUntil(self.registration.showNotification(title, {
+    body,
+    icon: './icons/icon-192.png',
+    badge: './icons/icon-192.png',
+    tag: 'ks_' + (noticeId || data.oid || Date.now()),
+    renotify: true,
+    vibrate: [220, 100, 220],
+    data: { noticeId, oid: data.oid || null, url: data.url || './' }
+  }));
+});
+
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const noticeId = (event.notification.data && event.notification.data.tag) || null;
+  const data = event.notification.data || {};
+  const noticeId = data.noticeId || data.tag || null;
+  const targetUrl = data.url || './';
   event.waitUntil((async () => {
     const clientList = await self.clients.matchAll({ type:'window', includeUncontrolled:true });
     for(const client of clientList){
@@ -90,6 +112,6 @@ self.addEventListener('notificationclick', (event) => {
         return;
       }
     }
-    await self.clients.openWindow('./');
+    await self.clients.openWindow(targetUrl);
   })());
 });

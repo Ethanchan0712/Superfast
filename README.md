@@ -1,17 +1,43 @@
-# 快送 · 香港貨運配對（PWA）
+# 快送 · 香港貨運配對（PWA + Node 後端）
 
 > 三種送法，價啱就接。步兵、私家車、貨van；出貨人定價或司機開價，雙方議價，平台費 $0。
 
-「快送」是一個**獨立於「的道」**的貨運配對網頁原型。角色只有兩個：**出貨人**（出單、定價、揀司機）同**接貨人**（接單、開價、送貨）。本 repo 係純靜態 PWA，冇後端、冇資料庫、冇金庫，唔會收平台費或代收款。
+「快送」是一個**獨立於「的道」**的貨運配對網頁 App。角色只有兩個：**出貨人**（出單、定價、揀司機）同**接貨人**（接單、開價、送貨）。呢個 repo 係 v2.4.0，包含：
 
-- 版本：`v2.3.1`
-- 入口：`index.html`
-- 資料：只存喺使用者瀏覽器嘅 `localStorage`（key：`ks_db_v2`、`ks_session_v2`、`ks_channel_v2`）
-- 部署：GitHub Pages / Render Static Site / Render Docker（三選一）
+- 前端 PWA（可安裝、可離線開啟）
+- Node 後端（共用訂單狀態、即時同步、Web Push）
+- Docker 部署（Render / 任何支援 Docker 嘅主機）
 
 ---
 
-## 1. 功能
+## 1. 版本與目錄
+
+- 版本：`v2.4.0`
+- 前端入口：`index.html`
+- 後端入口：`server/server.js`
+- 本機資料：`server/data/state.json`、`server/data/vapid.json`（執行時自動生成，**唔會**入 GitHub）
+- 前端本機資料：`localStorage` key `ks_db_v2`、`ks_session_v2`、`ks_channel_v2`
+
+```
+快送-app/
+├─ index.html
+├─ manifest.webmanifest
+├─ sw.js
+├─ offline.html
+├─ robots.txt
+├─ css/styles.css
+├─ js/config.js / utils.js / speech.js / pwa.js / app.js
+├─ icons/
+├─ server/server.js
+├─ package.json / package-lock.json
+├─ Dockerfile / .dockerignore
+├─ render.yaml
+└─ nginx.conf（只供純靜態主機用，Docker 版唔使用）
+```
+
+---
+
+## 2. 功能
 
 ### 出貨人
 - 電話號碼直接登入，**冇驗證碼**（示範版）
@@ -21,175 +47,153 @@
 - 三種都**包上樓**：預設加一小時泊車費 **$20**，完成交收可按實際改
 - 隧道、停車場另議或另計；上樓費用由雙方直接傾
 - 睇司機出價、還價、接受、拒絕、取消
-- 配對成功先彈出雙方電話同資料
+- **配對成功先彈出雙方電話同資料**；配對前只顯示遮罩電話
 
 ### 接貨人
 - 電話號碼直接登入，**冇驗證碼**（示範版）
-- 登入即可接單，**接單數目無上限**
+- 登入即上線，**接單數目無上限**
 - 只見到同自己送貨方式一樣嘅單（步兵／私家車／貨van）
-- 可以**直接接單**、**出價**、**還價**、拒接、取消
-- 接單前只見到遮罩電話；**配對成功後**先見到出貨人電話
-- 我的接單、我的報價、設定、規則
+- 可以直接接單、出價、還價、拒接、取消
+- 長期登入：關閉瀏覽器／手機 App 後再開，仍然保持登入
+- 有新單即時收到：大廳新卡、語音播報、通知中心、Web Push（瀏覽器/手機系統通知）
 
-### 共同
-- **語音播報**：新單／出價／接受／取消／提貨／交收，用粵語讀出
-- **通知中心** + 桌面通知（需要使用者授權；背景分頁會用 Service Worker 彈通知）
-- **自動更新**：檢查 `app-version`，有新版本顯示更新條；保留 `localStorage` 舊資料
-- 離線快取：已載入過嘅頁面／JS／CSS 可以離線再開
-- 響應式：手機窄屏優先，桌面兩欄
-- 示範登入：任何 **8 位香港手機號（4–9 字頭）**；出貨人 `91234567`、步兵 `97770000`、私家車 `98765432`
-
----
-
-## 2. 檔案結構
-
-```text
-快送-app/
-├── index.html                  # 入口（HTML + meta + PWA link）
-├── manifest.webmanifest        # PWA manifest（名稱、icon、standalone）
-├── sw.js                       # Service Worker（app shell、offline、notificationclick）
-├── offline.html                # 離線頁
-├── robots.txt                  # 示範站不想被搜尋引擎收錄
-├── .nojekyll                   # GitHub Pages 用
-├── css/
-│   └── styles.css              # 全部樣式（窄屏優先）
-├── js/
-│   ├── config.js               # 常數、三種運力、地區、貨物、付款方式
-│   ├── utils.js                # 格式化、距離、時間、電話遮罩
-│   ├── speech.js               # 粵語語音播報
-│   ├── pwa.js                  # SW 註冊、系統通知、通知點擊
-│   └── app.js                  # 儲存、UI、出單、報價、配對、通知、更新
-├── icons/
-│   ├── favicon.svg
-│   ├── favicon-32.png
-│   ├── icon-192.png
-│   ├── icon-512.png
-│   ├── icon-maskable-512.png
-│   ├── apple-touch-icon.png
-│   ├── og-image.png
-│   └── og-icon.png
-├── Dockerfile                  # Render Web Service（Docker）用
-├── nginx.conf                  # 靜態服務、manifest MIME、sw.js 不快取
-├── .dockerignore
-├── render.yaml                 # Render Blueprint（可選；Static Site）
-├── .gitignore
-├── .editorconfig
-├── README.md
-└── CHANGELOG.md
-```
-
-冇 `node_modules`、冇 build step、冇 `.env`。上傳整個資料夾內容即可。
+### 共用
+- 所有裝置共用同一份訂單狀態（Node 後端）
+- SSE 即時同步：出貨人一出單，其他在線接貨人即刻收到
+- Web Push：即使 App 喺背景，裝置仍可收到新單／出價／配對通知
+- 通知中心：未讀數、逐條記錄
+- 版本自動更新：有新版本會自動重新載入，**保留登入同訂單**
+- PWA：可加入主畫面；離線時可開 app shell
+- 平台費 **$0**；平台唔代收、唔墊付
 
 ---
 
-## 3. 本機預覽
+## 3. 本機運行（最簡單）
+
+需要 Node.js 20 或以上。
 
 ```bash
 cd 快送-app
-python3 -m http.server 8080
-# 開 http://127.0.0.1:8080/
+npm install
+npm start
 ```
 
-> 唔好直接雙擊 `index.html`：`file://` 之下 ES module 同 Service Worker 會失效。一定要經 HTTP 伺服器。
+打開 `http://localhost:8080`。
+
+- 同一 Wi-Fi 嘅手機可以用 `http://<你電腦 IP>:8080` 測試（但 Web Push 需要 HTTPS 或 localhost）
+- 資料會寫入 `server/data/state.json`
+- 預設 VAPID key 會生成喺 `server/data/vapid.json`
+
+### 示範帳號
+| 角色 | 電話 | 名稱 |
+| --- | --- | --- |
+| 出貨人 | `91234567` | 陳記果欄 |
+| 接貨人（步兵） | `97770000` | 阿明 |
+| 接貨人（私家車） | `91230000` | 阿強 |
+| 接貨人（私家車） | `98765432` | 阿強二 |
+
+任何 8 位、4–9 字頭香港手機號都可以登入。
 
 ---
 
-## 4. 部署
+## 4. 部署上網
 
-### 方法 A：GitHub Pages（最簡單、免費）
-1. 開一個新 repo（例如 `kuaisong`），**唔好同「的道」repo 混在一起**。
-2. 把 `快送-app/` **入面嘅所有檔案**上傳到 repo **根目錄**：
-   - `index.html` 必須在根，唔好變成 `快送-app/index.html` 或 `快送-app/快送-app/index.html`。
-3. Settings → Pages → Source：`Deploy from a branch`；Branch：`main`；Folder：`/ (root)`；Save。
-4. 等 1–2 分鐘，開 `https://<你的帳號>.github.io/<repo>/`。
-5. `.nojekyll` 已經放好，避免 GitHub 用 Jekyll 處理。
+### 方法 A：Render Web Service（Docker，建議）
+1. 把整個 repo 上傳 GitHub（**一定要有根目錄 `Dockerfile`**）。
+2. Render → New → Web Service → 選 GitHub repo。
+3. Runtime 選 **Docker**。
+4. Dockerfile Path：`./Dockerfile`；Docker Context：`.`。
+5. Plan 選 Free；Create Web Service。
+6. 等 build 完成，開 Render 提供嘅 `https://xxx.onrender.com`。
 
-### 方法 B：Render Web Service（你原本揀嘅 Docker）
-你截圖入面嘅錯誤：
-```text
-failed to solve: failed to read dockerfile: open Dockerfile: no such file or directory
+注意：
+- Render 免費服務會**睡眠**，第一次打開可能慢 30–60 秒；睡眠期間 Web Push 可能延遲。
+- Render 免費服務**冇持久磁碟**，重新部署／重啟有機會清空 `state.json`。要正式營運，請加 Persistent Disk（`/data`）或改用 PostgreSQL / Supabase。
+- 呢個 repo 嘅 `DATA_DIR=/data` 已經預留俾 Persistent Disk。
+
+### 方法 B：其他 Docker 主機
+```bash
+docker build -t kuaisong .
+docker run -d -p 8080:8080 -v kuaisong-data:/data -e PORT=8080 kuaisong
 ```
-意思係 Render 用 **Docker** 建置，但 repo 根目錄冇 `Dockerfile`。唔係代碼壞，係上傳漏檔／路徑唔對。
 
-修正：
-1. 確認 repo 根目錄有 `Dockerfile`（同 `index.html` 同一層）。
-2. Render → 你的 Web Service → **Settings**：
-   - **Environment / Runtime**：`Docker`
-   - **Dockerfile Path**：`./Dockerfile`
-   - **Docker Context**：`.`（如果檔案在子資料夾，改成該子資料夾，例如 `./快送-app`）
-   - **Branch**：`main`
-3. Save → **Manual Deploy** → **Clear build cache & deploy**。
-4. 健康檢查用 `GET /`，Dockerfile 已內建 `HEALTHCHECK`。
+### 方法 C：純靜態（GitHub Pages / Netlify / Cloudflare Pages）
+- 只上傳前端檔案（index、css、js、icons、manifest、sw、offline）。
+- 可以開 app、出單、本機示範。
+- **冇跨裝置同步、冇 Web Push**；因為冇後端。
+- 要完整功能，必須用方法 A 或 B。
 
-> GitHub 網頁上傳 **ZIP 唔會自動解壓**。要把 ZIP 解壓後，將入面嘅檔案逐個／整個資料夾拖上去，確認根目錄見到 `Dockerfile`。
-
-### 方法 C：Render Static Site（免費、唔用 Docker）
-1. Render → **New** → **Static Site**。
-2. 連同一個 repo，Branch `main`。
-3. **Build Command**：留空。
-4. **Publish Directory**：`.`（如果檔案在子資料夾，填 `快送-app`）。
-5. Create Static Site。
-
-> 呢個係純靜態 PWA，Static Site 已經夠；Docker 只係為咗繼續用你原本個 Web Service。
-
-### 方法 D：其他靜態主機
-Cloudflare Pages／Netlify：Build Command 留空，Output/Publish Directory `.`。冇 server-side route，全部用 hash／前端狀態，唔需要 SPA rewrite。
+### 方法 D：Render Static Site
+- 只適合睇版面；同上，冇後端同步／推送。
 
 ---
 
-## 5. 業務規則（UI 已寫入）
+## 5. 通知設定
 
-- 平台費 **$0**；平台唔抽佣、唔代收、唔墊付、唔做中間人。
-- 運費、隧道、停車場、上樓泊車費，全部由**出貨人同接貨人直接交收**。
-- 步兵限 **10kg**；私家車／貨van 嘅隧道費、停車場費另議或另計。
-- **三種都包上樓**；預設加一小時泊車費 **$20**，完成交收按實際調整。唔上樓就冇呢項。
-- 本版三種運力都**包上樓**；路邊交收只是其中一種安排，唔代表平台承擔搬運合約責任。
-- 貨物要**封箱**或**一眼睇清**；唔收違禁品、危險品、易腐爛而無妥善包裝嘅貨。
-- 代購：建議**先收錢**，或者交收完成後才安排運輸；平台不代收。
-- 接單前電話遮罩；**配對成功後**才交換雙方資料。
-- 司機自負車輛牌照、保險、載貨合規；步兵自負安全運送。
+1. 用接貨人電話登入。
+2. 按「開啟新單通知」，允許瀏覽器通知。
+3. 手機最好「加入主畫面」，用 PWA 方式開；iOS 16.4+ 支援 Web Push（必須加入主畫面）。
+4. 出貨人出單後，在線接貨人會即刻收到：
+   - 大廳新卡
+   - 語音播報（要開語音／手機媒體音量）
+   - 通知中心
+   - 系統通知（Web Push）
 
----
-
-## 6. 資料與自動更新
-
-### 資料存放
-- `ks_db_v2`：訂單、出價、通知、種子資料
-- `ks_session_v2`：登入 session（`sessionStorage`）
-- `ks_channel_v2`：跨分頁同步 channel
-- 清除瀏覽器資料會回復種子示範單；**唔會**影響伺服器（因為冇伺服器）。
-
-### 更新版本時（重要）
-一次過改四個位置，否則使用者可能仍跑舊 cache：
-
-1. `js/config.js`：`APP_VERSION`、`APP_VER_TAG`
-2. `index.html`：`<meta name="app-version" content="...">`
-3. `sw.js`：`CACHE_VERSION`（例如 `ks-v2.3.2-r1`）
-4. `CHANGELOG.md` 加一行
-
-改完重新部署。使用者開 App 時：
-- 未登入／冇開 modal：自動 reload 到新版本；
-- 已登入／有 modal：顯示「有新版本」更新條，按「立即更新」先 reload；
-- `localStorage` 舊訂單會保留。
+### 收不到通知的檢查
+- 必須用**後端版**（Render / Docker / localhost），純 GitHub Pages 冇推送。
+- 接貨人必須登入、上線、並且送貨方式同張單一樣（步兵／私家車／貨van）。
+- 瀏覽器要允許通知；iOS 要加入主畫面。
+- Render 免費服務睡眠時，推送會延遲到服務醒返。
+- 同一部電話同一瀏覽器只可以有一個帳號；測試兩個角色要用兩個瀏覽器 / 兩部電話。
 
 ---
 
-## 7. 已知限制（唔好當成正式交易平台）
+## 6. 資料與私隱
 
-- **純前端示範**：所有資料只存在同一部裝置嘅瀏覽器；不同電話、不同裝置之間**唔會真正同步**。要跨裝置派單，必須加後端（例如 Node/Express + SQLite/Postgres）同推送服務。
-- **冇真實 SMS 驗證**：示範版任何 8 位香港手機號都可登入。正式上線要加 OTP、防濫用、實名／司機認證。
-- **冇支付／托管**：平台不代收、不墊付；如要做代購，需另外接支付商同退款流程。
-- **通知受瀏覽器限制**：iOS 要加入主畫面（Add to Home Screen）後才支援 Web Push／通知；Android Chrome 較完整。語音要用使用者手勢啟動，唔會自動播。
-- **Service Worker 快取**：更新版必須 bump `CACHE_VERSION`，否則舊 JS 可能被 cache 住。
-- **法律／保險**：私營配對、司機自負牌照保險；正式營運前請找香港律師／保險顧問確認載貨、載客、責任同私隱（PDPO）安排。
+- 示範版 API **冇登入驗證、冇 OTP、冇權限控制**：任何人有網址都可以讀寫狀態。只適合朋友內部測試，唔好直接當正式平台。
+- 正式營運前最少年做：
+  - 電話 OTP / SMS 驗證
+  - 接貨人身份／牌照／保險證明
+  - API rate limit、簽名／工作階段 token
+  - 個人資料收集同意、保留期限、刪除機制（香港 PDPO）
+  - 禁止品檢查、貨物責任同保險條款
+- 平台唔收平台費、唔代收貨款、唔墊付；代購建議先收錢或交收後再安排運輸。
+- 接貨人自負牌照、保險同交通法例責任。
 
 ---
 
-## 8. 快速檢查清單（部署前）
+## 7. 業務規則（已寫入 App）
 
-- [ ] repo 根目錄見到 `index.html`、`Dockerfile`、`sw.js`
-- [ ] 用 HTTP 開到首頁，兩個角色都登入到
-- [ ] 出貨人出單 → 接貨人收到通知 → 開價 → 出貨人接受 → 彈雙方電話
-- [ ] 上樓 checkbox 有加到 $20 泊車費
-- [ ] 手機同桌面都睇得清；冇白邊、冇字被切
-- [ ] 版本三處一致（config／meta／SW cache）
+- 三種運力：步兵 **≤10kg**；私家車；貨van。
+- 三種都包上樓；上樓預設加一小時泊車費 **$20**，完成按實際。
+- 隧道、停車場另議／另計；貨van 上樓費用由雙方直接傾。
+- 出貨人可以定價，接貨人可以開價／還價，最後由出貨人決定。
+- 只接**封箱**或**一眼睇清**貨物；唔接禁運品、危險品、非法物品。
+- 平台費 **$0**；平台只提供配對，唔係承運人。
+
+---
+
+## 8. 常見問題
+
+**Render 報 `failed to read Dockerfile`**
+→ repo 根目錄要有 `Dockerfile`；Dockerfile Path 填 `./Dockerfile`。
+
+**Render 報 `.nojekyll not found`**
+→ v2.4.0 嘅 Dockerfile 已經唔再 COPY `.nojekyll`，重新用最新 ZIP。
+
+**出完單，司機收唔到**
+→ 確認司機已登入、上線、送貨方式一樣；確認係後端版；睇通知權限。
+
+**重開 App 要再登入**
+→ v2.4.0 已經改用 localStorage 長期登入；如果之前用舊版，請重新登入一次。
+
+**資料會唔會唔見**
+→ 前端資料存在瀏覽器；後端資料存在 `DATA_DIR/state.json`。Render 免費服務重啟可能清空後端，正式用要加持久碟或資料庫。
+
+---
+
+## 9. 授權 / 名稱
+
+- App 名稱：**快送**
+- 與「的道 DidaoHK」完全獨立，唔共用程式、資料、品牌。
+- 呢個 repo 係私人原型，未經同意唔好當商業平台營運。

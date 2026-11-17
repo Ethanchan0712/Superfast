@@ -4,8 +4,8 @@
 export const DB_KEY = 'ks_db_v2';
 export const SESSION_KEY = 'ks_session_v2';
 export const CHANNEL = 'ks_channel_v2';
-export const APP_VERSION = '2.3.1';
-export const APP_VER_TAG = 'v2.3.1';
+export const APP_VERSION = '2.4.0';
+export const APP_VER_TAG = 'v2.4.0';
 
 export const UPSTAIRS_FEE = 20;
 export const MODES = {

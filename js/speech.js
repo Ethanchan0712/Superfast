@@ -11,9 +11,23 @@ function pickVoice(){
            vs.find(v => /zh[-_]TW|zh[-_]CN|Chinese/i.test(v.lang + ' ' + v.name)) || null;
   }catch(e){ return null; }
 }
+export function unlockSpeech(){
+  if(!('speechSynthesis' in window)) return false;
+  try{
+    speechSynthesis.resume();
+    // 用一句短句解鎖手機瀏覽器的語音權限
+    const u = new SpeechSynthesisUtterance('語音已開啟');
+    u.lang = 'zh-HK'; u.rate = 0.92; u.pitch = 1;
+    u.volume = 0.6;
+    const v = pickVoice(); if(v) u.voice = v;
+    speechSynthesis.speak(u);
+    return true;
+  }catch(e){ return false; }
+}
 export function speak(text){
   if(!('speechSynthesis' in window)) return;
   try{
+    speechSynthesis.resume();
     const u = new SpeechSynthesisUtterance(text);
     u.lang = 'zh-HK'; u.rate = 0.92; u.pitch = 1;
     const v = pickVoice(); if(v) u.voice = v;

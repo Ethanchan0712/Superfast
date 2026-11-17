@@ -6,7 +6,18 @@ const canUseSW = () => 'serviceWorker' in navigator && location.protocol !== 'fi
 export async function registerServiceWorker(){
   if(!canUseSW()) return null;
   try{
+    const hadController = !!navigator.serviceWorker.controller;
     const reg = await navigator.serviceWorker.register('./sw.js', { scope:'./', updateViaCache:'none' });
+    if(reg && reg.update) reg.update().catch(() => {});
+    // 新 Service Worker 接手後自動 reload 一次，確保 app.js 都更新
+    if(hadController){
+      let refreshing = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if(refreshing) return;
+        refreshing = true;
+        location.reload();
+      });
+    }
     return reg;
   }catch(err){
     console.warn('SW register failed', err);

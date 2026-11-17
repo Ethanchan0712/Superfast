@@ -1,7 +1,7 @@
 services:
   - type: web
     name: kuaisong
-    runtime: static
+    runtime: docker
     plan: free
-    buildCommand: ""
-    staticPublishPath: .
+    dockerfilePath: ./Dockerfile
+    autoDeploy: true
