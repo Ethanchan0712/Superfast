@@ -4,7 +4,8 @@ FROM nginx:1.27-alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 # 只複製網站真正需要的檔案，避免把設定／文件放進公開 web root
-COPY index.html manifest.webmanifest sw.js offline.html robots.txt .nojekyll /usr/share/nginx/html/
+COPY index.html manifest.webmanifest sw.js offline.html robots.txt /usr/share/nginx/html/
+RUN touch /usr/share/nginx/html/.nojekyll
 COPY css/ /usr/share/nginx/html/css/
 COPY js/ /usr/share/nginx/html/js/
 COPY icons/ /usr/share/nginx/html/icons/
