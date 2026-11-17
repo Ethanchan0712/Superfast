@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: kuaisong
+    runtime: static
+    plan: free
+    buildCommand: ""
+    staticPublishPath: .
